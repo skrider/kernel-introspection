@@ -28,6 +28,9 @@ END_REGEX = r"\[kin:end:(?P<tag>.+)\]"
 POINTER_FILTER_REGEX = r"0x[0-9a-fA-F]+"
 LINES_THRESHOLD = 10
 
+def replace_non_alphanumeric(s: str, replacement: str = "_") -> str:
+    return re.sub(r"[^a-zA-Z]", replacement, s)
+
 def deterministic_hash(s: List[str], filter_pointer = True) -> int:
     hash = hashlib.sha256()
     for l in s:
@@ -50,9 +53,10 @@ class Section:
 class TagInfo:
     content: List[str]
 
-    def to_json(self, filter_pointer=True):
+    def to_json(self, tag, filter_pointer=True):
         return {
             "content": self.content[:LINES_THRESHOLD],
+            "tag": tag,
             "digest": deterministic_hash(self.content, filter_pointer)
         }
 
@@ -100,7 +104,7 @@ def main(args):
         else:
             out[section.tag].content.extend(section.content)
     
-    out_json = {k: ti.to_json(not args.no_filter_pointer) for k, ti in out.items()}
+    out_json = {replace_non_alphanumeric(k): ti.to_json(k, not args.no_filter_pointer) for k, ti in out.items()}
 
     out_str = json.dumps(out_json, indent=4)
     
