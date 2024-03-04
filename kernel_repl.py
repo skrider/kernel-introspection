@@ -1,6 +1,7 @@
 #!/bin/env python3
 
 import numpy as np
+import types
 import code
 from argparse import ArgumentParser
 import sys
@@ -15,21 +16,21 @@ extract_regex = r"(?P<name>\w+)\s*=\s*(?P<value>[\s\S]+)"
 
 MACROS = """
 #define PRINT_NUMPY(t)      \\
-    cute::print("\n<NUMPY>\n");   \\
+    cute::print("\\n<NUMPY>\\n");   \\
     cute::print(#t " = ");        \\
     cute::print_numpy(t);         \\
-    cute::print("\n</NUMPY>\n");
+    cute::print("\\n</NUMPY>\\n");
 #define PRINT_NUMPY_VAL(t)  \\
-    cute::print("\n<NUMPY>\n");   \\
+    cute::print("\\n<NUMPY>\\n");   \\
     cute::print(#t " = ");        \\
     cute::print(t);               \\
-    cute::print("\n</NUMPY>\n");
+    cute::print("\\n</NUMPY>\\n");
 #define PRINT_NUMPY_STR(t)  \\
-    cute::print("\n<NUMPY>\n");   \\
+    cute::print("\\n<NUMPY>\\n");   \\
     cute::print(#t " = ");        \\
     cute::print(t);               \\
-    cute::print("\n</NUMPY>\n");
-#define PRINT_NUMPY_BARRIER() cute::print("\n<BARRIER>\n");
+    cute::print("\\n</NUMPY>\\n");
+#define PRINT_NUMPY_BARRIER() cute::print("\\n<BARRIER>\\n");
 
 template<class Engine, class Layout>
 void
@@ -43,7 +44,7 @@ print_numpy(cute::Tensor<Engine,Layout> const& t)
 			print(", ");
 		}
 		if (i % 10 == 9) {
-			print("\n");
+			print("\\n");
 		}
 	}
 	print("])");
@@ -73,21 +74,24 @@ def parse_section(raw):
     return match.group("name"), match.group("value")
 
 def repl(input_stream):
-    def advance(context):
+    def advance(ctx):
         state = 0
         acc = ""
         all : Dict[str, str] = {}
 
         while state != 2:
+            ctx.__line += 1
             try:
                 line = next(input_stream)
             except:
                 break
             if re.match(begin_regex, line):
-                assert state != 1
+                if state == 1:
+                    raise ValueError("nested sections not allowed at line " + str(ctx.__line))
                 state = 1
             elif re.match(end_regex, line):
-                assert state == 1
+                if state != 1:
+                    raise ValueError("unterminated section at line " + str(ctx.__line))
                 name, value = parse_section(acc)
                 all[name] = value
                 acc = ""
@@ -99,24 +103,37 @@ def repl(input_stream):
                 acc += line
 
         for name, value in all.items():
-            context[name] = eval(value)
+            setattr(ctx, name, eval(value))
+            
+    def advance_n(ctx, n):
+        for _ in range(n):
+            advance(ctx)
 
-    context = {}
-    advance(context)
+    ctx = types.SimpleNamespace()
+    setattr(ctx, "__line", 0)
+    advance(ctx)
     
     # start code interactive
     repl_local_vars = {}
     repl_local_vars['advance'] = advance
+    repl_local_vars['advance_n'] = advance_n
     repl_local_vars['np'] = np
-    repl_local_vars['context'] = context
+    repl_local_vars['ctx'] = ctx
+    if args.env_file:
+        with open(args.env_file, "r") as f:
+            exec(f.read(), repl_local_vars)
 
-    print(context)
+    # print keys of ctx
+    print("Loaded variables:")
+    for key, val in ctx.__dict__.items():
+        print(f"\t{key}: {type(val)}")
 
     code.interact(local=repl_local_vars)
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="start a repl with kernel output history")
     parser.add_argument("--file", type=str, help="file to read in", required=False)
+    parser.add_argument("--env-file", type=str, help="file to read in for environment", required=False)
     parser.add_argument("--print-macros", type=bool, help="print helper macros", required=False)
     
     args = parser.parse_args()
